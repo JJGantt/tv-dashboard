@@ -48,7 +48,10 @@ async def wake_and_focus():
         await atv.remote_control.home()
     finally:
         atv.close()
-        await asyncio.sleep(0.1)
+        # Let pending cleanup tasks finish before the loop closes
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def send_command(command: str):
@@ -62,7 +65,9 @@ async def send_command(command: str):
         await cmd()
     finally:
         atv.close()
-        await asyncio.sleep(0.1)
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def run_wake_and_focus():

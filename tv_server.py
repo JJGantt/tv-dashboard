@@ -9,8 +9,9 @@ Pi IPs:
 """
 
 import logging
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from tv_dashboard import tv
+from atv_control import run_wake_and_focus, run_command
 
 PORT = 8766
 
@@ -26,6 +27,32 @@ logging.basicConfig(
 @app.route("/status")
 def status():
     return jsonify({"ok": True, "host": "raspberrypi", "service": "tv-server"})
+
+
+@app.route("/tv/wake", methods=["POST"])
+def wake():
+    """Wake the Apple TV and switch TV input to it."""
+    try:
+        run_wake_and_focus()
+        return jsonify({"ok": True, "message": "Apple TV woken and focused"})
+    except Exception as e:
+        logging.error(f"Wake failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/tv/command", methods=["POST"])
+def command():
+    """Send a remote control command to the Apple TV."""
+    data = request.get_json(silent=True) or {}
+    cmd = data.get("command", "").strip()
+    if not cmd:
+        return jsonify({"ok": False, "error": "no command"}), 400
+    try:
+        run_command(cmd)
+        return jsonify({"ok": True, "message": f"Sent: {cmd}"})
+    except Exception as e:
+        logging.error(f"Command '{cmd}' failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":

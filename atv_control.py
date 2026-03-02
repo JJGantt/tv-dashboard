@@ -118,16 +118,18 @@ async def list_apps() -> list[dict]:
 
 
 async def launch_app(app_id: str):
-    """Launch an app by bundle ID."""
+    """Wake the TV if needed, then launch an app by bundle ID."""
     async with _apple_tv() as atv:
+        await atv.remote_control.home()
         await atv.apps.launch_app(app_id)
 
 
 # --- Streaming ---
 
 async def play_url(url: str):
-    """Stream a URL via AirPlay."""
+    """Wake the TV if needed, then stream a URL via AirPlay."""
     async with _apple_tv() as atv:
+        await atv.remote_control.home()
         await atv.stream.play_url(url)
 
 

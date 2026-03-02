@@ -9,8 +9,6 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
-# Try Mac first (more powerful), fall back to local Pi
-MAC_SSH = "ssh -o ConnectTimeout=3 -o BatchMode=yes jaredgantt@10.0.0.14"
 CLAUDE_CMD = "claude"
 
 
@@ -27,6 +25,16 @@ def _is_mac_reachable():
         return False
 
 
+def _shell_quote(s: str) -> str:
+    """Quote a string for shell use."""
+    if not s:
+        return "''"
+    import re
+    if re.match(r'^[a-zA-Z0-9._/=-]+$', s):
+        return s
+    return "'" + s.replace("'", "'\"'\"'") + "'"
+
+
 class CodingSessionManager:
     def __init__(self):
         self.sessions = [None, None, None]  # session IDs per terminal
@@ -37,14 +45,13 @@ class CodingSessionManager:
             yield json.dumps({"type": "error", "message": "Invalid terminal"}) + "\n"
             return
 
-        cmd = [CLAUDE_CMD, "-p", text, "--output-format", "stream-json"]
+        cmd = [CLAUDE_CMD, "-p", text, "--output-format", "stream-json", "--verbose"]
         if self.sessions[terminal]:
             cmd += ["--resume", self.sessions[terminal]]
 
         # Try Mac first, fall back to local
         use_mac = _is_mac_reachable()
         if use_mac:
-            # Wrap command for SSH execution
             escaped = " ".join(_shell_quote(c) for c in cmd)
             run_cmd = [
                 "ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
@@ -61,7 +68,7 @@ class CodingSessionManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1,  # line-buffered
+                bufsize=1,
             )
 
             for line in process.stdout:
@@ -75,32 +82,31 @@ class CodingSessionManager:
 
                 etype = event.get("type", "")
 
-                # Capture session ID from system message
+                # Capture session ID from init
                 if etype == "system" and event.get("subtype") == "init":
                     sid = event.get("session_id")
                     if sid:
                         self.sessions[terminal] = sid
                         logger.info(f"Terminal {terminal}: session {sid}")
 
-                # Forward text deltas
-                elif etype == "assistant" and event.get("subtype") == "text":
-                    text_content = event.get("text", "")
-                    if text_content:
-                        yield json.dumps({"type": "delta", "text": text_content}) + "\n"
+                # Assistant message — extract text content
+                elif etype == "assistant":
+                    msg = event.get("message", {})
+                    content = msg.get("content", [])
+                    for block in content:
+                        if block.get("type") == "text":
+                            text_content = block.get("text", "")
+                            if text_content:
+                                yield json.dumps({"type": "delta", "text": text_content}) + "\n"
+                        elif block.get("type") == "tool_use":
+                            tool_name = block.get("name", "tool")
+                            yield json.dumps({"type": "tool", "name": tool_name}) + "\n"
 
-                # Tool use events — forward as info
-                elif etype == "tool_use":
-                    tool_name = event.get("tool", event.get("name", ""))
-                    yield json.dumps({"type": "tool", "name": tool_name}) + "\n"
-
-                # Tool results
-                elif etype == "tool_result":
-                    pass  # Don't forward raw tool results to TV
-
-                # Result message (final complete response)
+                # Result — contains session_id too
                 elif etype == "result":
-                    # The result contains the final text; we already streamed deltas
-                    pass
+                    sid = event.get("session_id")
+                    if sid:
+                        self.sessions[terminal] = sid
 
             process.wait()
             if process.returncode != 0:
@@ -124,15 +130,3 @@ class CodingSessionManager:
         if 0 <= terminal <= 2:
             self.sessions[terminal] = None
             logger.info(f"Terminal {terminal}: session cleared")
-
-
-def _shell_quote(s: str) -> str:
-    """Quote a string for shell use."""
-    if not s:
-        return "''"
-    # If it's safe, return as-is
-    import re
-    if re.match(r'^[a-zA-Z0-9._/=-]+$', s):
-        return s
-    # Otherwise single-quote it, escaping any existing single quotes
-    return "'" + s.replace("'", "'\"'\"'") + "'"

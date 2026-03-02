@@ -11,6 +11,7 @@ import subprocess
 logger = logging.getLogger(__name__)
 
 CLAUDE_CMD = "claude"
+MAC_CLAUDE_CMD = "/usr/local/bin/claude"
 MAC_USER = "jaredgantt@Jareds-MacBook-Air.local"
 MAC_PROJECTS_DIR = "/Users/jaredgantt/.claude/projects"
 
@@ -69,17 +70,20 @@ class CodingSessionManager:
             yield json.dumps({"type": "error", "message": "Invalid terminal"}) + "\n"
             return
 
-        cmd = [CLAUDE_CMD, "-p", text, "--output-format", "stream-json", "--verbose"]
-        if self.sessions[terminal]:
-            cmd += ["--resume", self.sessions[terminal]]
-
         # Try Mac first, fall back to local
         use_mac = _is_mac_reachable()
+        claude_bin = MAC_CLAUDE_CMD if use_mac else CLAUDE_CMD
+
+        cmd = [claude_bin, "-p", text, "--output-format", "stream-json", "--verbose"]
+        if self.sessions[terminal]:
+            cmd += ["--resume", self.sessions[terminal]]
         if use_mac:
             escaped = " ".join(_shell_quote(c) for c in cmd)
+            # Non-interactive SSH needs PATH set for node/claude
+            remote_cmd = f"export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH && {escaped}"
             run_cmd = [
                 "ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-                MAC_USER, escaped,
+                MAC_USER, remote_cmd,
             ]
             logger.info(f"Terminal {terminal}: running on Mac via SSH")
         else:

@@ -6,6 +6,7 @@ Each session maintains a Claude conversation via --resume.
 import json
 import logging
 import os
+import shlex
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ class CodingSessionManager:
     def __init__(self):
         self.sessions = [None, None, None]  # session IDs per terminal
         self.labels = ["Terminal 1", "Terminal 2", "Terminal 3"]
+        self.mac_sessions = set()  # terminals whose sessions live on the Mac
 
     def send_message(self, terminal: int, text: str):
         """Run claude -p with --resume, yield NDJSON lines as they stream."""
@@ -70,12 +72,22 @@ class CodingSessionManager:
             yield json.dumps({"type": "error", "message": "Invalid terminal"}) + "\n"
             return
 
-        cmd = [CLAUDE_CMD, "-p", text, "--output-format", "stream-json", "--verbose"]
-        if self.sessions[terminal]:
-            cmd += ["--resume", self.sessions[terminal]]
+        is_mac = terminal in self.mac_sessions and _is_mac_reachable()
 
-        run_cmd = cmd
-        logger.info(f"Terminal {terminal}: running locally on Pi")
+        if is_mac:
+            # Run Claude on the Mac — files, tools, context all live there
+            remote_parts = [CLAUDE_CMD, "-p", shlex.quote(text),
+                            "--output-format", "stream-json", "--verbose"]
+            if self.sessions[terminal]:
+                remote_parts += ["--resume", self.sessions[terminal]]
+            cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+                   MAC_USER, " ".join(remote_parts)]
+            logger.info(f"Terminal {terminal}: running on Mac via SSH")
+        else:
+            cmd = [CLAUDE_CMD, "-p", text, "--output-format", "stream-json", "--verbose"]
+            if self.sessions[terminal]:
+                cmd += ["--resume", self.sessions[terminal]]
+            logger.info(f"Terminal {terminal}: running locally on Pi")
 
         try:
             process = subprocess.Popen(
@@ -151,40 +163,27 @@ class CodingSessionManager:
         """Clear a session (start fresh next time)."""
         if 0 <= terminal <= 2:
             self.sessions[terminal] = None
-            self.labels[terminal] = f"Terminal {terminal + 1}"
+            self.mac_sessions.discard(terminal)
+            self.labels[terminal] = ""
             logger.info(f"Terminal {terminal}: session cleared")
 
-    def attach(self, terminal: int, session_id: str, project_path: str = "", label: str = None):
-        """Attach an existing Mac session to a terminal.
+    def attach(self, terminal: int, session_id: str, label: str = None, is_mac: bool = False):
+        """Attach a session to a terminal.
 
-        Copies the session JSONL from the Mac to the Pi so --resume can find it.
+        For Mac sessions, Claude runs on the Mac via SSH — no JSONL copy needed.
+        For Pi sessions, Claude runs locally.
         """
         if not 0 <= terminal <= 2:
             return False
 
-        # Copy JSONL from Mac to Pi's project dir for the server's cwd
-        if _is_mac_reachable() and project_path:
-            mac_dir_name = project_path.replace("/", "-").lstrip("-")
-            mac_jsonl = f"{MAC_PROJECTS_DIR}/-{mac_dir_name}/{session_id}.jsonl"
-
-            pi_project_dir = os.path.expanduser("~/.claude/projects/-home-jaredgantt-tv-dashboard")
-            os.makedirs(pi_project_dir, exist_ok=True)
-            pi_jsonl = f"{pi_project_dir}/{session_id}.jsonl"
-
-            try:
-                subprocess.run(
-                    ["scp", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-                     f"{MAC_USER}:{mac_jsonl}", pi_jsonl],
-                    capture_output=True, timeout=30,
-                )
-                logger.info(f"Terminal {terminal}: copied session {session_id} from Mac")
-            except Exception as e:
-                logger.error(f"Terminal {terminal}: failed to copy session: {e}")
-
         self.sessions[terminal] = session_id
+        if is_mac:
+            self.mac_sessions.add(terminal)
+        else:
+            self.mac_sessions.discard(terminal)
         if label:
             self.labels[terminal] = label
-        logger.info(f"Terminal {terminal}: attached session {session_id} ({label})")
+        logger.info(f"Terminal {terminal}: attached session {session_id} (mac={is_mac}, label={label})")
         return True
 
     def scan_mac_sessions(self) -> list[dict]:

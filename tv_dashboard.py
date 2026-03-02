@@ -363,6 +363,40 @@ def coding_mac_sessions():
     return jsonify({"sessions": sessions})
 
 
+
+@tv.route("/tv/coding/session-summaries", methods=["GET"])
+def coding_session_summaries():
+    """Return Haiku-generated summaries for claude-mac sessions from local summary files."""
+    summaries_dir = Path("/home/jaredgantt/data/summaries")
+    results = []
+    if summaries_dir.exists():
+        for path in sorted(summaries_dir.glob("*.json"), reverse=True):
+            try:
+                with open(path) as f:
+                    entries = json.load(f)
+                for entry in entries:
+                    if "claude-mac" not in entry.get("sources", []):
+                        continue
+                    sid = entry.get("uuid", "")
+                    summary = entry.get("summary", "")
+                    if not sid or not summary or summary == "Summary unavailable.":
+                        continue
+                    try:
+                        end_time = datetime.fromisoformat(entry.get("end", "")).timestamp()
+                    except Exception:
+                        end_time = 0
+                    results.append({
+                        "session_id": sid,
+                        "summary": summary,
+                        "end_time": end_time,
+                        "entry_count": entry.get("entry_count", 0),
+                    })
+            except Exception as e:
+                logger.error(f"session-summaries: error reading {path}: {e}")
+    results.sort(key=lambda x: x["end_time"], reverse=True)
+    return jsonify({"sessions": results[:40]})
+
+
 @tv.route("/tv/coding/attach", methods=["POST"])
 def coding_attach():
     """Attach an existing Mac session to a TV terminal."""
@@ -370,10 +404,10 @@ def coding_attach():
     terminal = data.get("terminal", 0)
     session_id = data.get("session_id", "").strip()
     label = data.get("label", "")
+    is_mac = data.get("is_mac", False)
     if not session_id:
         return jsonify({"error": "no session_id"}), 400
-    project_path = data.get("project_path", "")
-    ok = _session_mgr.attach(terminal, session_id, project_path, label)
+    ok = _session_mgr.attach(terminal, session_id, label=label, is_mac=is_mac)
     if ok:
         return jsonify({"ok": True})
     return jsonify({"error": "invalid terminal"}), 400

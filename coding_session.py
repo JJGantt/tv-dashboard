@@ -11,7 +11,7 @@ import subprocess
 logger = logging.getLogger(__name__)
 
 CLAUDE_CMD = "claude"
-MAC_USER = "jaredgantt@10.0.0.162"
+MAC_USER = "jaredgantt@Jareds-MacBook-Air.local"
 MAC_PROJECTS_DIR = "/Users/jaredgantt/.claude/projects"
 
 

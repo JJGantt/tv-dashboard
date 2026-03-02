@@ -347,3 +347,39 @@ print(text)
     finally:
         import os
         os.unlink(tmp_path)
+
+
+@tv.route("/tv/coding/mac-sessions", methods=["GET"])
+def coding_mac_sessions():
+    """Scan Mac for existing Claude Code sessions."""
+    sessions = _session_mgr.scan_mac_sessions()
+    # Add project labels
+    for s in sessions:
+        path = s.get("project_path", "")
+        parts = path.rstrip("/").split("/")
+        skip = {"Users", "jaredgantt", "home", "Projects"}
+        meaningful = [p for p in parts if p and p not in skip]
+        s["label"] = meaningful[-1] if meaningful else path
+    return jsonify({"sessions": sessions})
+
+
+@tv.route("/tv/coding/attach", methods=["POST"])
+def coding_attach():
+    """Attach an existing Mac session to a TV terminal."""
+    data = request.get_json(silent=True) or {}
+    terminal = data.get("terminal", 0)
+    session_id = data.get("session_id", "").strip()
+    label = data.get("label", "")
+    if not session_id:
+        return jsonify({"error": "no session_id"}), 400
+    ok = _session_mgr.attach(terminal, session_id, label)
+    if ok:
+        return jsonify({"ok": True})
+    return jsonify({"error": "invalid terminal"}), 400
+
+
+@tv.route("/tv/coding/history/<session_id>", methods=["GET"])
+def coding_history(session_id):
+    """Get conversation history for a session."""
+    messages = _session_mgr.get_session_history(session_id)
+    return jsonify({"messages": messages})

@@ -154,10 +154,33 @@ class CodingSessionManager:
             self.labels[terminal] = f"Terminal {terminal + 1}"
             logger.info(f"Terminal {terminal}: session cleared")
 
-    def attach(self, terminal: int, session_id: str, label: str = None):
-        """Attach an existing session to a terminal."""
+    def attach(self, terminal: int, session_id: str, project_path: str = "", label: str = None):
+        """Attach an existing Mac session to a terminal.
+
+        Copies the session JSONL from the Mac to the Pi so --resume can find it.
+        """
         if not 0 <= terminal <= 2:
             return False
+
+        # Copy JSONL from Mac to Pi's project dir for the server's cwd
+        if _is_mac_reachable() and project_path:
+            mac_dir_name = project_path.replace("/", "-").lstrip("-")
+            mac_jsonl = f"{MAC_PROJECTS_DIR}/-{mac_dir_name}/{session_id}.jsonl"
+
+            pi_project_dir = os.path.expanduser("~/.claude/projects/-home-jaredgantt-tv-dashboard")
+            os.makedirs(pi_project_dir, exist_ok=True)
+            pi_jsonl = f"{pi_project_dir}/{session_id}.jsonl"
+
+            try:
+                subprocess.run(
+                    ["scp", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+                     f"{MAC_USER}:{mac_jsonl}", pi_jsonl],
+                    capture_output=True, timeout=30,
+                )
+                logger.info(f"Terminal {terminal}: copied session {session_id} from Mac")
+            except Exception as e:
+                logger.error(f"Terminal {terminal}: failed to copy session: {e}")
+
         self.sessions[terminal] = session_id
         if label:
             self.labels[terminal] = label

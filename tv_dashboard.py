@@ -372,7 +372,8 @@ def coding_attach():
     label = data.get("label", "")
     if not session_id:
         return jsonify({"error": "no session_id"}), 400
-    ok = _session_mgr.attach(terminal, session_id, label)
+    project_path = data.get("project_path", "")
+    ok = _session_mgr.attach(terminal, session_id, project_path, label)
     if ok:
         return jsonify({"ok": True})
     return jsonify({"error": "invalid terminal"}), 400

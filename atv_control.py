@@ -64,7 +64,10 @@ def _run(coro):
 
 async def wake_and_focus():
     """Wake the Apple TV and switch TV input to it via CEC."""
+    import asyncio as _asyncio
     async with _apple_tv() as atv:
+        await atv.remote_control.home()
+        await _asyncio.sleep(2)
         await atv.remote_control.home()
 
 

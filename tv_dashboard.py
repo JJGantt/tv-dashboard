@@ -273,3 +273,77 @@ def card_image(image_id):
     item = section["items"][idx]
     path = _render_card(section_id, item["title"], item.get("subtitle", ""))
     return send_file(path, mimetype="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Coding Mode endpoints
+# ---------------------------------------------------------------------------
+
+from coding_session import CodingSessionManager
+from flask import request, Response
+
+_session_mgr = CodingSessionManager()
+
+
+@tv.route("/tv/coding/message", methods=["POST"])
+def coding_message():
+    """Stream Claude response as NDJSON."""
+    data = request.get_json(silent=True) or {}
+    terminal = data.get("terminal", 0)
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "no text"}), 400
+    return Response(
+        _session_mgr.send_message(terminal, text),
+        mimetype="application/x-ndjson",
+    )
+
+
+@tv.route("/tv/coding/sessions", methods=["GET"])
+def coding_sessions():
+    """Return which sessions are active."""
+    return jsonify({"sessions": _session_mgr.get_sessions()})
+
+
+@tv.route("/tv/coding/clear/<int:terminal>", methods=["POST"])
+def coding_clear(terminal):
+    """Clear a terminal session."""
+    _session_mgr.clear(terminal)
+    return jsonify({"ok": True})
+
+
+@tv.route("/tv/coding/transcribe", methods=["POST"])
+def coding_transcribe():
+    """Transcribe audio using faster-whisper. Expects WAV in request body."""
+    import tempfile
+    import subprocess as sp
+
+    audio_data = request.get_data()
+    if not audio_data:
+        return jsonify({"error": "no audio data"}), 400
+
+    # Write to temp file
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(audio_data)
+        tmp_path = f.name
+
+    try:
+        # Use faster-whisper via the Python API
+        result = sp.run(
+            ["python3", "-c", f"""
+import sys
+from faster_whisper import WhisperModel
+model = WhisperModel("medium.en", compute_type="int8")
+segments, _ = model.transcribe("{tmp_path}")
+text = " ".join(s.text.strip() for s in segments)
+print(text)
+"""],
+            capture_output=True, text=True, timeout=30,
+        )
+        text = result.stdout.strip()
+        return jsonify({"text": text})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        import os
+        os.unlink(tmp_path)
